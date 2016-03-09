@@ -5,6 +5,7 @@ import android.animation.AnimatorListenerAdapter;
 import android.annotation.SuppressLint;
 import android.content.Context;
 import android.content.res.Resources;
+import android.os.Build;
 import android.support.annotation.NonNull;
 import android.view.Gravity;
 import android.view.View;
@@ -13,12 +14,14 @@ import android.view.animation.AccelerateInterpolator;
 import android.view.animation.DecelerateInterpolator;
 import android.widget.FrameLayout;
 import android.widget.TextView;
+import butterknife.Bind;
+import butterknife.BindDimen;
 import butterknife.ButterKnife;
-import butterknife.InjectView;
 import butterknife.OnClick;
 import java.util.Locale;
 
 import static android.graphics.PixelFormat.TRANSLUCENT;
+import static android.os.Build.VERSION_CODES.LOLLIPOP_MR1;
 import static android.text.TextUtils.getLayoutDirectionFromLocale;
 import static android.view.ViewAnimationUtils.createCircularReveal;
 import static android.view.WindowManager.LayoutParams.FLAG_LAYOUT_INSET_DECOR;
@@ -42,6 +45,11 @@ final class OverlayView extends FrameLayout {
     Resources res = context.getResources();
     int width = res.getDimensionPixelSize(R.dimen.overlay_width);
     int height = res.getDimensionPixelSize(R.dimen.overlay_height);
+    // TODO Remove explicit "M" comparison when M is released.
+    if (Build.VERSION.SDK_INT > LOLLIPOP_MR1 || "M".equals(Build.VERSION.RELEASE)) {
+      height = res.getDimensionPixelSize(R.dimen.overlay_height_m);
+    }
+
     final WindowManager.LayoutParams params =
         new WindowManager.LayoutParams(width, height, TYPE_SYSTEM_ERROR, FLAG_NOT_FOCUSABLE
             | FLAG_NOT_TOUCH_MODAL
@@ -73,29 +81,29 @@ final class OverlayView extends FrameLayout {
     void onStop();
   }
 
-  @InjectView(R.id.record_overlay_buttons) View buttonsView;
-  @InjectView(R.id.record_overlay_cancel) View cancelView;
-  @InjectView(R.id.record_overlay_start) View startView;
-  @InjectView(R.id.record_overlay_stop) View stopView;
-  @InjectView(R.id.record_overlay_recording) TextView recordingView;
+  @Bind(R.id.record_overlay_buttons) View buttonsView;
+  @Bind(R.id.record_overlay_cancel) View cancelView;
+  @Bind(R.id.record_overlay_start) View startView;
+  @Bind(R.id.record_overlay_stop) View stopView;
+  @Bind(R.id.record_overlay_recording) TextView recordingView;
+
+  @BindDimen(R.dimen.overlay_width) int animationWidth;
 
   private final Listener listener;
   private final boolean showCountDown;
-  private final int animationWidth;
 
   private OverlayView(Context context, Listener listener, boolean showCountDown) {
     super(context);
     this.listener = listener;
     this.showCountDown = showCountDown;
 
-    int width = getResources().getDimensionPixelSize(R.dimen.overlay_width);
-    if (getLayoutDirectionFromLocale(Locale.getDefault()) == LAYOUT_DIRECTION_RTL) {
-      width = -width; // Account for animating in from the other side of the screen.
-    }
-    animationWidth = width;
-
     inflate(context, R.layout.overlay_view, this);
-    ButterKnife.inject(this);
+    ButterKnife.bind(this);
+
+    if (getLayoutDirectionFromLocale(Locale.getDefault()) == LAYOUT_DIRECTION_RTL) {
+      animationWidth = -animationWidth; // Account for animating in from the other side of screen.
+    }
+
     CheatSheet.setup(cancelView);
     CheatSheet.setup(startView);
   }
@@ -137,14 +145,7 @@ final class OverlayView extends FrameLayout {
         if (showCountDown) {
           showCountDown();
         } else {
-          recordingView.animate()
-              .alpha(0)
-              .setDuration(NON_COUNTDOWN_DELAY)
-              .withEndAction(new Runnable() {
-                @Override public void run() {
-                  startRecording();
-                }
-              });
+          countdownComplete();
         }
       }
     }, showCountDown ? COUNTDOWN_DELAY : NON_COUNTDOWN_DELAY);
@@ -162,23 +163,30 @@ final class OverlayView extends FrameLayout {
   }
 
   private void showCountDown() {
-    recordingView.setText(R.string.countdown_three);
+    String[] countdown = getResources().getStringArray(R.array.countdown);
+    countdown(countdown, 0); // array resource must not be empty
+  }
+
+  private void countdownComplete() {
+    recordingView.animate()
+        .alpha(0)
+        .setDuration(COUNTDOWN_DELAY)
+        .withEndAction(new Runnable() {
+          @Override public void run() {
+            startRecording();
+          }
+        });
+  }
+
+  private void countdown(final String[] countdownArr, final int index) {
     postDelayed(new Runnable() {
       @Override public void run() {
-        recordingView.setText(R.string.countdown_two);
-        postDelayed(new Runnable() {
-          @Override public void run() {
-            recordingView.setText(R.string.countdown_one);
-            recordingView.animate()
-                .alpha(0)
-                .setDuration(COUNTDOWN_DELAY)
-                .withEndAction(new Runnable() {
-                  @Override public void run() {
-                    startRecording();
-                  }
-                });
-          }
-        }, COUNTDOWN_DELAY);
+        recordingView.setText(countdownArr[index]);
+        if (index < countdownArr.length - 1) {
+          countdown(countdownArr, index + 1);
+        } else {
+          countdownComplete();
+        }
       }
     }, COUNTDOWN_DELAY);
   }

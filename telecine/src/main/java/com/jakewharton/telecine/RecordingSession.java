@@ -3,6 +3,8 @@ package com.jakewharton.telecine;
 import android.app.Notification;
 import android.app.NotificationManager;
 import android.app.PendingIntent;
+import android.content.BroadcastReceiver;
+import android.content.ContentResolver;
 import android.content.Context;
 import android.content.Intent;
 import android.content.res.Configuration;
@@ -35,6 +37,7 @@ import java.util.concurrent.TimeUnit;
 import javax.inject.Provider;
 import timber.log.Timber;
 
+import static android.app.PendingIntent.FLAG_CANCEL_CURRENT;
 import static android.content.Context.MEDIA_PROJECTION_SERVICE;
 import static android.content.Context.NOTIFICATION_SERVICE;
 import static android.content.Context.WINDOW_SERVICE;
@@ -48,15 +51,18 @@ import static android.media.MediaRecorder.VideoSource.SURFACE;
 import static android.os.Environment.DIRECTORY_MOVIES;
 
 final class RecordingSession {
+  static final int NOTIFICATION_ID = 522592;
+
   private static final String DISPLAY_NAME = "telecine";
-  private static final int NOTIFICATION_ID = 522592;
   private static final String MIME_TYPE = "video/mp4";
 
   interface Listener {
     /** Invoked immediately prior to the start of recording. */
     void onStart();
+
     /** Invoked immediately after the end of recording. */
     void onStop();
+
     /** Invoked after all work for this session has completed. */
     void onEnd();
   }
@@ -127,7 +133,9 @@ final class RecordingSession {
     windowManager.addView(overlayView, OverlayView.createLayoutParams(context));
 
     analytics.send(new HitBuilders.EventBuilder() //
-        .setCategory(Analytics.CATEGORY_RECORDING).setAction(Analytics.ACTION_OVERLAY_SHOW).build());
+        .setCategory(Analytics.CATEGORY_RECORDING)
+        .setAction(Analytics.ACTION_OVERLAY_SHOW)
+        .build());
   }
 
   private void hideOverlay() {
@@ -170,19 +178,20 @@ final class RecordingSession {
     CamcorderProfile camcorderProfile = CamcorderProfile.get(CamcorderProfile.QUALITY_HIGH);
     int cameraWidth = camcorderProfile != null ? camcorderProfile.videoFrameWidth : -1;
     int cameraHeight = camcorderProfile != null ? camcorderProfile.videoFrameHeight : -1;
-    Timber.d("Camera size: %s x %s", cameraWidth, cameraHeight);
+    int cameraFrameRate = camcorderProfile != null ? camcorderProfile.videoFrameRate : 30;
+    Timber.d("Camera size: %s x %s framerate: %s", cameraWidth, cameraHeight, cameraFrameRate);
 
     int sizePercentage = videoSizePercentage.get();
     Timber.d("Size percentage: %s", sizePercentage);
 
     return calculateRecordingInfo(displayWidth, displayHeight, displayDensity, isLandscape,
-        cameraWidth, cameraHeight, sizePercentage);
+        cameraWidth, cameraHeight, cameraFrameRate, sizePercentage);
   }
 
   private void startRecording() {
     Timber.d("Starting screen recording...");
 
-    if (outputRoot.mkdirs()) {
+    if (!outputRoot.mkdirs()) {
       Timber.e("Unable to create output directory '%s'.", outputRoot.getAbsolutePath());
       // We're probably about to crash, but at least the log will indicate as to why.
     }
@@ -194,7 +203,7 @@ final class RecordingSession {
     recorder = new MediaRecorder();
     recorder.setVideoSource(SURFACE);
     recorder.setOutputFormat(MPEG_4);
-    recorder.setVideoFrameRate(30);
+    recorder.setVideoFrameRate(recordingInfo.frameRate);
     recorder.setVideoEncoder(H264);
     recorder.setVideoSize(recordingInfo.width, recordingInfo.height);
     recorder.setVideoEncodingBitRate(8 * 1000 * 1000);
@@ -213,8 +222,9 @@ final class RecordingSession {
     projection = projectionManager.getMediaProjection(resultCode, data);
 
     Surface surface = recorder.getSurface();
-    display = projection.createVirtualDisplay(DISPLAY_NAME, recordingInfo.width, recordingInfo.height,
-        recordingInfo.density, VIRTUAL_DISPLAY_FLAG_PRESENTATION, surface, null, null);
+    display =
+        projection.createVirtualDisplay(DISPLAY_NAME, recordingInfo.width, recordingInfo.height,
+            recordingInfo.density, VIRTUAL_DISPLAY_FLAG_PRESENTATION, surface, null, null);
 
     recorder.start();
     running = true;
@@ -279,16 +289,25 @@ final class RecordingSession {
 
   private void showNotification(final Uri uri, Bitmap bitmap) {
     Intent viewIntent = new Intent(ACTION_VIEW, uri);
-    PendingIntent pendingViewIntent = PendingIntent.getActivity(context, 0, viewIntent, 0);
+    PendingIntent pendingViewIntent =
+        PendingIntent.getActivity(context, 0, viewIntent, FLAG_CANCEL_CURRENT);
 
     Intent shareIntent = new Intent(ACTION_SEND);
     shareIntent.setType(MIME_TYPE);
     shareIntent.putExtra(Intent.EXTRA_STREAM, uri);
-    PendingIntent pendingShareIntent = PendingIntent.getActivity(context, 0, shareIntent, 0);
+    shareIntent = Intent.createChooser(shareIntent, null);
+    PendingIntent pendingShareIntent =
+        PendingIntent.getActivity(context, 0, shareIntent, FLAG_CANCEL_CURRENT);
 
-    String title = context.getString(R.string.notification_captured_title);
-    String subtitle = context.getString(R.string.notification_captured_subtitle);
-    String share = context.getString(R.string.notification_captured_share);
+    Intent deleteIntent = new Intent(context, DeleteRecordingBroadcastReceiver.class);
+    deleteIntent.setData(uri);
+    PendingIntent pendingDeleteIntent =
+        PendingIntent.getBroadcast(context, 0, deleteIntent, FLAG_CANCEL_CURRENT);
+
+    CharSequence title = context.getText(R.string.notification_captured_title);
+    CharSequence subtitle = context.getText(R.string.notification_captured_subtitle);
+    CharSequence share = context.getText(R.string.notification_captured_share);
+    CharSequence delete = context.getText(R.string.notification_captured_delete);
     Notification.Builder builder = new Notification.Builder(context) //
         .setContentTitle(title)
         .setContentText(subtitle)
@@ -298,13 +317,14 @@ final class RecordingSession {
         .setColor(context.getResources().getColor(R.color.primary_normal))
         .setContentIntent(pendingViewIntent)
         .setAutoCancel(true)
-        .addAction(R.drawable.ic_share_white_24dp, share, pendingShareIntent);
+        .addAction(R.drawable.ic_share_white_24dp, share, pendingShareIntent)
+        .addAction(R.drawable.ic_delete_white_24dp, delete, pendingDeleteIntent);
 
     if (bitmap != null) {
-      builder.setLargeIcon(createSquareBitmap(bitmap)) //
+      builder.setLargeIcon(createSquareBitmap(bitmap))
           .setStyle(new Notification.BigPictureStyle() //
-              .setBigContentTitle(title)
-              .setSummaryText(subtitle)
+              .setBigContentTitle(title) //
+              .setSummaryText(subtitle) //
               .bigPicture(bitmap));
     }
 
@@ -334,21 +354,21 @@ final class RecordingSession {
 
   static RecordingInfo calculateRecordingInfo(int displayWidth, int displayHeight,
       int displayDensity, boolean isLandscapeDevice, int cameraWidth, int cameraHeight,
-      int sizePercentage) {
+      int cameraFrameRate, int sizePercentage) {
     // Scale the display size before any maximum size calculations.
     displayWidth = displayWidth * sizePercentage / 100;
     displayHeight = displayHeight * sizePercentage / 100;
 
     if (cameraWidth == -1 && cameraHeight == -1) {
       // No cameras. Fall back to the display size.
-      return new RecordingInfo(displayWidth, displayHeight, displayDensity);
+      return new RecordingInfo(displayWidth, displayHeight, cameraFrameRate, displayDensity);
     }
 
     int frameWidth = isLandscapeDevice ? cameraWidth : cameraHeight;
     int frameHeight = isLandscapeDevice ? cameraHeight : cameraWidth;
     if (frameWidth >= displayWidth && frameHeight >= displayHeight) {
       // Frame can hold the entire display. Use exact values.
-      return new RecordingInfo(displayWidth, displayHeight, displayDensity);
+      return new RecordingInfo(displayWidth, displayHeight, cameraFrameRate, displayDensity);
     }
 
     // Calculate new width or height to preserve aspect ratio.
@@ -357,17 +377,19 @@ final class RecordingSession {
     } else {
       frameHeight = displayHeight * frameWidth / displayWidth;
     }
-    return new RecordingInfo(frameWidth, frameHeight, displayDensity);
+    return new RecordingInfo(frameWidth, frameHeight, cameraFrameRate, displayDensity);
   }
 
   static final class RecordingInfo {
     final int width;
     final int height;
+    final int frameRate;
     final int density;
 
-    RecordingInfo(int width, int height, int density) {
+    RecordingInfo(int width, int height, int frameRate, int density) {
       this.width = width;
       this.height = height;
+      this.frameRate = frameRate;
       this.density = density;
     }
   }
@@ -393,6 +415,28 @@ final class RecordingSession {
     if (running) {
       Timber.w("Destroyed while running!");
       stopRecording();
+    }
+  }
+
+  public static final class DeleteRecordingBroadcastReceiver extends BroadcastReceiver {
+
+    @Override public void onReceive(Context context, Intent intent) {
+      NotificationManager notificationManager =
+          (NotificationManager) context.getSystemService(NOTIFICATION_SERVICE);
+      notificationManager.cancel(NOTIFICATION_ID);
+      final Uri uri = intent.getData();
+      final ContentResolver contentResolver = context.getContentResolver();
+      new AsyncTask<Void, Void, Void>() {
+        @Override protected Void doInBackground(@NonNull Void... none) {
+          int rowsDeleted = contentResolver.delete(uri, null, null);
+          if (rowsDeleted == 1) {
+            Timber.i("Deleted recording.");
+          } else {
+            Timber.e("Error deleting recording.");
+          }
+          return null;
+        }
+      }.execute();
     }
   }
 }

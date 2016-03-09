@@ -5,12 +5,14 @@ import android.app.ActivityManager;
 import android.content.Intent;
 import android.content.res.Resources;
 import android.graphics.Bitmap;
-import android.graphics.drawable.BitmapDrawable;
+import android.graphics.BitmapFactory;
 import android.os.Bundle;
 import android.widget.Spinner;
 import android.widget.Switch;
+import butterknife.Bind;
+import butterknife.BindColor;
+import butterknife.BindString;
 import butterknife.ButterKnife;
-import butterknife.InjectView;
 import butterknife.OnCheckedChanged;
 import butterknife.OnClick;
 import butterknife.OnItemSelected;
@@ -20,15 +22,20 @@ import javax.inject.Inject;
 import timber.log.Timber;
 
 public final class TelecineActivity extends Activity {
-  @InjectView(R.id.spinner_video_size_percentage) Spinner videoSizePercentageView;
-  @InjectView(R.id.switch_show_countdown) Switch showCountdownView;
-  @InjectView(R.id.switch_hide_from_recents) Switch hideFromRecentsView;
-  @InjectView(R.id.switch_recording_notification) Switch recordingNotificationView;
+  @Bind(R.id.spinner_video_size_percentage) Spinner videoSizePercentageView;
+  @Bind(R.id.switch_show_countdown) Switch showCountdownView;
+  @Bind(R.id.switch_hide_from_recents) Switch hideFromRecentsView;
+  @Bind(R.id.switch_recording_notification) Switch recordingNotificationView;
+  @Bind(R.id.switch_show_touches) Switch showTouchesView;
+
+  @BindString(R.string.app_name) String appName;
+  @BindColor(R.color.primary_normal) int primaryNormal;
 
   @Inject @VideoSizePercentage IntPreference videoSizePreference;
   @Inject @ShowCountdown BooleanPreference showCountdownPreference;
   @Inject @HideFromRecents BooleanPreference hideFromRecentsPreference;
   @Inject @RecordingNotification BooleanPreference recordingNotificationPreference;
+  @Inject @ShowTouches BooleanPreference showTouchesPreference;
 
   @Inject Analytics analytics;
 
@@ -38,17 +45,14 @@ public final class TelecineActivity extends Activity {
   @Override protected void onCreate(Bundle savedInstanceState) {
     super.onCreate(savedInstanceState);
 
-    Resources res = getResources();
-    String taskName = res.getString(R.string.app_name);
-    Bitmap taskIcon =
-        ((BitmapDrawable) res.getDrawable(R.drawable.ic_videocam_white_48dp)).getBitmap();
-    int taskColor = res.getColor(R.color.primary_normal);
-    setTaskDescription(new ActivityManager.TaskDescription(taskName, taskIcon, taskColor));
-
     ((TelecineApplication) getApplication()).inject(this);
 
     setContentView(R.layout.activity_main);
-    ButterKnife.inject(this);
+    ButterKnife.bind(this);
+
+    Resources res = getResources();
+    Bitmap taskIcon = BitmapFactory.decodeResource(res, R.drawable.ic_videocam_white_48dp);
+    setTaskDescription(new ActivityManager.TaskDescription(appName, taskIcon, primaryNormal));
 
     videoSizePercentageAdapter = new VideoSizePercentageAdapter(this);
 
@@ -59,6 +63,7 @@ public final class TelecineActivity extends Activity {
     showCountdownView.setChecked(showCountdownPreference.get());
     hideFromRecentsView.setChecked(hideFromRecentsPreference.get());
     recordingNotificationView.setChecked(recordingNotificationPreference.get());
+    showTouchesView.setChecked(showTouchesPreference.get());
   }
 
   @OnClick(R.id.launch) void onLaunchClicked() {
@@ -135,6 +140,21 @@ public final class TelecineActivity extends Activity {
       analytics.send(new HitBuilders.EventBuilder() //
           .setCategory(Analytics.CATEGORY_SETTINGS)
           .setAction(Analytics.ACTION_CHANGE_RECORDING_NOTIFICATION)
+          .setValue(newValue ? 1 : 0)
+          .build());
+    }
+  }
+
+  @OnCheckedChanged(R.id.switch_show_touches) void onShowTouchesChanged() {
+    boolean newValue = showTouchesView.isChecked();
+    boolean oldValue = showTouchesPreference.get();
+    if (newValue != oldValue) {
+      Timber.d("Show touches preference changing to %s", newValue);
+      showTouchesPreference.set(newValue);
+
+      analytics.send(new HitBuilders.EventBuilder() //
+          .setCategory(Analytics.CATEGORY_SETTINGS)
+          .setAction(Analytics.ACTION_CHANGE_SHOW_TOUCHES)
           .setValue(newValue ? 1 : 0)
           .build());
     }

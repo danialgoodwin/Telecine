@@ -1,6 +1,46 @@
 Change Log
 ==========
 
+1.5.0 *(2015-11-20)*
+--------------------
+
+Public:
+
+ * New icon! Thanks to Victor Stuber for donating his time to creating it.
+ * Fix notification share/delete acting on the wrong recording when multiple recordings were taken one
+   after the other.
+
+
+1.4.0 *(2015-10-17)*
+--------------------
+
+Public:
+
+ * Added "Delete" option to recording completed notification.
+ * Ensure an application chooser is always shown when sharing from the recording completed notification.
+ * Translations for ES, RU, ZH (China)
+
+Internal:
+
+ * Use the camera framerate for the MediaRecorder.
+
+
+1.3.0 *(2015-07-14)*
+--------------------
+
+Public:
+
+ * Option for enabling "Show Touches" feature which places white dots on the recording for screen
+   interactions.
+ * Translations for FR, PT, ZH.
+
+
+Internal:
+
+ * Alter height on M preview to be 24dp to match new status bar height.
+ * Correct log when unable to create output dir to actually log when unable.
+
+
 1.2.0 *(2015-02-24)*
 --------------------
 
